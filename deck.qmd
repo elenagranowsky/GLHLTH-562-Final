@@ -1,0 +1,951 @@
+---
+title: "Gender Differential Impacts of Spousal Bereavement on Health Outcomes"
+author: "Elena Granowsky"
+format: 
+  revealjs: 
+    theme: serif
+editor: visual
+---
+
+## What is Spousal Bereavement?
+
+Commonly defined as the enduring and holistic psychological and physical experiences of grief and adaptation following the death of a romantic partner.
+
+![](images/download-2.jpg){fig-align="center" width="423"}
+
+## How are we defining health outcomes?
+
+In this study health outcomes were measured by Center for Epidemiological Studies-Depression (CES-D) depression screenings issues with each wave of data and a self reported health metric. Both of these screenings have been widely used in studies with elderly adults.
+
+![](images/The-8-item-Scale-Driven-from-the-CES-D-to-Screen-Individuals-Depressive-Traits.png){fig-align="center"}
+
+## Why should we research spousal bereavement?
+
+-   To better inform policy and interventions targeted to the elderly community and the aging population
+-   Help strengthen health systems
+-   Improve long term health outcomes
+-   Identify health inequities
+
+## The Data
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(MatchIt)
+library(ggplot2)
+library(cobalt)
+library(knitr)
+library(patchwork)
+library(easystats)
+library(see)
+library(performance)
+
+HRS_big_boy <- read.csv("~/Desktop/GLHLTH-562-Final/data/HRS_big_boy.csv")
+```
+
+The Health and Retirement Survey (HRS) was started by the University of Michigan in 1992. The HRS is a leading collector of information about the physical, emotional, biological, and financial effects of aging in the United States. Participants are interviewed every two years and are typically followed until death. For this study, I used the data from the 2014-2020 waves of data.
+
+## An Abundance of Data Cleaning
+
+The HRS has the largest data base of information on for elderly adults in the united states. However, it does not have pre-cleaned information about the effects of spousal bereavement on health outcomes such as depression and self reported health. As a result, I had to create my own cleaned data set...
+
+```{r}
+current_year <- 2020
+HRS_big_boy$AGE <- current_year - HRS_big_boy$BIRTHYR
+
+HRS_big_boy$bereave_stat_2016 <- 0
+HRS_big_boy$bereave_stat_2018 <- 0
+HRS_big_boy$bereave_stat_2020 <- 0
+
+HRS_big_boy$AfterBereave_2016 <- 0
+HRS_big_boy$AfterBereave_2018 <- 0
+HRS_big_boy$AfterBereave_2020 <- 0
+
+# Identify bereavement status (1 if bereaved, 0 if not)
+HRS_big_boy <- HRS_big_boy |>
+  mutate(HRS_big_boy, 
+         "bereavement_status" = ifelse(is.na(HRS_big_boy$SPOUSEDEATHYEAR), 0, 1))
+
+for (i in 1:NROW(HRS_big_boy)){
+  if (!is.na(HRS_big_boy$SPOUSEDEATHYEAR[i])){
+    if ((HRS_big_boy$SPOUSEDEATHYEAR[i] == 2016 && HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$PIWMONTH[i]) || (HRS_big_boy$SPOUSEDEATHYEAR[i] < 2016)){
+      HRS_big_boy$bereave_stat_2016[i] = 1
+    }
+  }
+  
+  if (!is.na(HRS_big_boy$SPOUSEDEATHYEAR[i])){
+    if ((HRS_big_boy$SPOUSEDEATHYEAR[i] == 2018 && HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$QIWMONTH[i]) || (HRS_big_boy$SPOUSEDEATHYEAR[i] < 2018)){
+      HRS_big_boy$bereave_stat_2018[i] = 1
+    }
+  }
+  
+  if (!is.na(HRS_big_boy$SPOUSEDEATHYEAR[i])){
+    if ((HRS_big_boy$SPOUSEDEATHYEAR[i] == 2020 && HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$RIWMONTH[i]) || (HRS_big_boy$SPOUSEDEATHYEAR[i] < 2020)){
+      HRS_big_boy$bereave_stat_2020[i] = 1
+    }
+  }
+  
+  if (!is.na(HRS_big_boy$SPOUSEDEATHYEAR[i])){
+    if (HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$PIWMONTH[i]){
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2016){
+        HRS_big_boy$AfterBereave_2016[i] = 2017 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    } else {
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2015){
+        HRS_big_boy$AfterBereave_2016[i] = 2016 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    }
+    
+    if (HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$QIWMONTH[i]){
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2018){
+        HRS_big_boy$AfterBereave_2018[i] = 2019 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    } else {
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2017){
+        HRS_big_boy$AfterBereave_2018[i] = 2018 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    }
+    
+    if (HRS_big_boy$SPOUSEDEATHMONTH[i] < HRS_big_boy$RIWMONTH[i]){
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2020){
+        HRS_big_boy$AfterBereave_2020[i] = 2021 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    } else {
+      if (HRS_big_boy$SPOUSEDEATHYEAR[i] <= 2019){
+        HRS_big_boy$AfterBereave_2020[i] = 2020 - HRS_big_boy$SPOUSEDEATHYEAR[i]
+      }
+    }
+  }
+  
+}
+
+```
+
+## A Very Brief Workflow
+
+-   Load in the data from the waves 2014, 2016, 2018, and 2020: 20,000 participants and over 7,000 variables in each wave!
+-   Select variables to control for (age, race, education, gender, etc.) + CES-D and SRH
+-   Merge each wave into a longitudinal data set + merge information from exit interviews
+-   Create spouse death year variable, create binary variables for bereavement status for each wave, create variables that measure time since bereavement for temporal aspect of analysis
+
+```{r}
+HRS_big_boy <- HRS_big_boy |>
+  filter(complete.cases(rd110_score_2020)) 
+
+HRS_big_boy <- HRS_big_boy |>
+  filter(complete.cases(qd110_score_2018))
+
+HRS_big_boy <- HRS_big_boy |>
+  filter(complete.cases(pd110_score_2016))
+
+HRS_big_boy <- HRS_big_boy |>
+  filter(complete.cases(od110_score_2014))
+```
+
+## But how can we account for covariates that may cause differences in bereavement effects?
+
+-   Propensity Score Matching!
+-   A statistical matching technique that attempts to estimate the effect of a treatment, policy, or other intervention by accounting for the covariates that may predict receiving the treatment.
+-   For this study, treatment = bereavement and control = not experiencing bereavement
+
+## Lets try it out using a package aptly called 'MatchIt'
+
+```{r}
+match_model <- matchit(bereavement_status ~ AGE + RACE + DEGREE + GENDER,
+                       data = HRS_big_boy, 
+                       method = "nearest", 
+                       distance ="logit")
+
+#summary(match_model)
+
+matched_data <- match.data(match_model)
+
+
+bal.tab(match_model, un = TRUE)
+
+nearest_neighbor <- match.data(match_model)
+
+#stratify the data set by gender
+match_data_m <- matched_data |>
+   filter(GENDER == 1)
+
+match_data_w <- matched_data |>
+   filter(GENDER == 2)
+
+```
+
+## Next Step: Regressions
+
+-   With our matched data in hand, we can now begin to investigate the relationship between our selected covariates and bereavement
+-   We are particularly interested in gender: how do men's health outcomes change after experiencing bereavement compared to women?
+
+## Equations:
+
+$$(CES - D)_{it} = \beta_0 + \beta_1 \times Bere_{it} + (AfterBere_{it} \times Bere_{it}) \times \beta_2 + Z_{it} \times \Gamma + \varepsilon_{it}$$ $$\text(SAH)_{it} = \beta_0 + \beta_1 \times Bere_{it} + (AfterBere_{it} \times Bere_{i}) \times \beta_2 + Z_{it} \times \Gamma + \varepsilon_{it}$$
+
+-   AfterBere= years after bereavement for the individual in the year (t),
+
+-   Bere- dummy variable that indicates bereavement status for the individual (i) in the year t.
+
+-   Zit is a vector of covariates (gender, age, race, level of education)
+
+-   e is standard error.
+
+## A look into CES-D scores before bereavement
+
+```{r}
+#generate baseline CESD table
+baseline_info <- matched_data |>
+  group_by(GENDER, RACE) |>
+  summarise(average_cesd_baseline = mean(CESD_score_2014, na.rm = TRUE))
+
+baseline_info$Group <- rownames(baseline_info)
+
+group_names <- c("White Men", "White Women", "Black Men", "Hispanic Men", "Black Women", "Hispanic Women")
+
+# Creating Visualization of baseline 2014 data
+baseline_info <- baseline_info[order(baseline_info$average_cesd_baseline), ]
+
+# Plotting using ggplot2
+theme_set(theme_minimal(base_family = "serif"))
+
+# Plotting using ggplot2
+ggplot(baseline_info, aes(x = reorder(Group, average_cesd_baseline), y = average_cesd_baseline)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "#4E79A7", width = 0.7, alpha = 0.8) +
+  geom_text(aes(label = round(average_cesd_baseline, 2)), vjust = -0.5, position = position_dodge(width = 0.9), size = 3.5) + 
+  labs(x = NULL, y = NULL, 
+       title = "Baseline CESD Scores by Demographic Group", 
+       subtitle = "Comparison of average CESD scores among different demographic groups in 2014") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10), 
+        axis.title.y = element_text(size = 12), 
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12, face = "italic"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_rect(color = "black", size = 1.5, fill = NA), 
+        legend.position = "none") +
+  ylim(0, 2) +
+  scale_x_discrete(labels = group_names)
+
+
+```
+
+```{r}
+
+baseline_info <- matched_data |>
+  group_by(GENDER, RACE) |>
+  summarise(average_srh_baseline = mean(srh_2014, na.rm = TRUE))
+
+baseline_info$Group <- rownames(baseline_info)
+
+group_names <- c("White Women", "White Men", "Hispanic Men", "Black Women", "Hispanic Women", "Black Men")
+
+# Creating Visualization of baseline 2014 data
+baseline_info <- baseline_info[order(baseline_info$average_srh_baseline), ]
+
+# Plotting using ggplot2
+theme_set(theme_minimal(base_family = "serif"))
+
+# Plotting using ggplot2
+ggplot(baseline_info, aes(x = reorder(Group, average_srh_baseline), y = average_srh_baseline)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "#4E79A7", width = 0.7, alpha = 0.8) +
+  geom_text(aes(label = round(average_srh_baseline, 2)), vjust = -0.5, position = position_dodge(width = 0.9), size = 3.5) + 
+  labs(x = NULL, y = NULL, 
+       title = "Baseline SRH Scores by Demographic Group", 
+       subtitle = "Comparison of average SRH scores among different demographic groups in 2014") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10), 
+        axis.title.y = element_text(size = 12), 
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12, face = "italic"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_rect(color = "black", size = 1.5, fill = NA), 
+        legend.position = "none") +
+  ylim(0, 3.5) +
+  scale_x_discrete(labels = group_names)
+
+
+
+baseline_SRH <- matched_data |>
+  group_by(GENDER) |>
+  summarise(average_srh_baseline = mean(srh_2014, na.rm = TRUE))
+
+ggplot(baseline_SRH, aes(x = factor(GENDER, labels = c("Men", "Women")), y = average_srh_baseline)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9), fill = "#4E79A7", alpha = 0.8) +
+  geom_text(aes(label = round(average_srh_baseline, 2)), vjust = -0.5, position = position_dodge(width = 0.9), size = 3.5) +
+  labs(x = NULL, y = NULL, 
+       title = "Baseline SRH Scores by Gender", 
+       subtitle = "Comparison of average SRH scores between men and women in 2014") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12, face = "italic"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.border = element_rect(color = "black", fill=NA), 
+        axis.line = element_line(color = "black"),
+        axis.ticks = element_line(color = "black"), 
+        legend.position = "none") +
+  ylim(0, 3.5)
+
+```
+
+
+## Now just between women and men?
+
+```{r}
+
+baseline_CESD <- matched_data |>
+  group_by(GENDER) |>
+  summarise(average_cesd_baseline = mean(CESD_score_2014, na.rm = TRUE))
+
+ggplot(baseline_CESD, aes(x = factor(GENDER, labels = c("Men", "Women")), y = average_cesd_baseline)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9), fill = "#4E79A7", alpha = 0.8) +
+  geom_text(aes(label = round(average_cesd_baseline, 2)), vjust = -0.5, position = position_dodge(width = 0.9), size = 3.5) +
+  labs(x = NULL, y = NULL, 
+       title = "Baseline CESD Scores by Gender", 
+       subtitle = "Comparison of average CESD scores between men and women in 2014") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12, face = "italic"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.border = element_rect(color = "black", fill=NA), 
+        axis.line = element_line(color = "black"),
+        axis.ticks = element_line(color = "black"), 
+        legend.position = "none") +
+  ylim(0, 1.5)
+```
+
+```{r}
+#begin regressions here starting with 2016
+
+library(parameters)
+library(see)
+
+did_model_2016_women <- lm(CESD_score_2016 ~ bereave_stat_2016 * AfterBereave_2016 + RACE + AGE + DEGREE, data = match_data_w)
+print(summary(did_model_2016_women))
+
+#women on average if their spouse is dead report depression scores 1.64 higher than women whose spouses are still alive
+#additionally among women whos spouses are dead they report a decrease in cesd score of -0.43 on average for every year since their spouse died (measured by afterbere 2016)
+
+#intercepts are no interpretable in this context due to the nature of age as a variable (is age is set to zero that doesnt make sense, same with race)
+
+did_model_2016_men <- lm(CESD_score_2016 ~ bereave_stat_2016 + (bereave_stat_2016 * AfterBereave_2016)+ RACE + AGE + DEGREE, data = match_data_m)
+print(summary(did_model_2016_men))
+
+#among men whose spouses are dead they report depression scores 1.07 higher than men who's spouses are still alive
+#additionally among men whos spouses are dead they report an insignificant decrease in CESD score on average for every year since their spouse died (measured by afterbere 2016) (pvalue0.8983). Suggesting that there is no significant relationship between time and depressive symptoms for men, while there is one for women
+
+#cesd scores 2018
+did_model_2018_women <- lm(CESD_score_2018 ~ bereave_stat_2018 + (bereave_stat_2018 * AfterBereave_2018)  + RACE + AGE + DEGREE, data = match_data_w)
+print(summary(did_model_2018_women))
+
+#in 2018 women on average if their spouse is dead report depression scores 1.19 higher than women whose spouses are still alive
+#additionally among women whose spouses are dead they report a decrease in cesd score of -0.26 on average for every year since their spouse died (measured by afterbere 2018)
+
+did_model_2018_men <- lm(CESD_score_2018 ~ bereave_stat_2018 + (bereave_stat_2018 * AfterBereave_2018)  + RACE + AGE + DEGREE, data = match_data_m)
+print(summary(did_model_2018_men))
+
+#in 2018 among men whose spouses are dead they report depression scores 1.43 higher than men who's spouses are still alive
+#additionally among men whos spouses are dead they report an insignificant decrease in CESD score on average for every year since their spouse died (measured by afterbere 2016) (pvalue0.08983). Suggesting that there is no significant relationship between time and depressive symptoms for men, while there is one for women
+
+#cesd scores 2020
+did_model_2020_women <- lm(CESD_score_2020 ~ bereave_stat_2020 + (bereave_stat_2020 * AfterBereave_2020)  + RACE + AGE + DEGREE, data = match_data_w)
+print(summary(did_model_2020_women))
+
+#in 2020, women on average if their spouse is dead report depression scores .99 higher than women whose spouses are still alive
+#additionally among women whose spouses are dead they report a decrease in cesd score of -0.12 on average for every year since their spouse died (measured by afterbere 2020)
+
+did_model_2020_men <- lm(CESD_score_2020 ~ bereave_stat_2020 + (bereave_stat_2020 * AfterBereave_2020) + RACE + AGE + DEGREE, data = match_data_m)
+print(summary(did_model_2020_men))
+
+#in 2020 among men whose spouses are dead they report depression scores 1.45 higher than men who's spouses are still alive
+#additionally among men whos spouses are dead they report an insignificant decrease in CESD score on average for every year since their spouse died (measured by afterbere 2016) (pvalue0.431). Suggesting that there is no significant relationship between time and depressive symptoms for men, while there is one for women
+
+
+#easystats
+
+```
+
+## Beginning the Regressions: 2016
+
+```{r}
+predicted_values <- predict(did_model_2016_men)
+
+# Create a dataframe with observed and predicted values
+visualization_data1 <- data.frame(
+  Observed = match_data_m$CESD_score_2016,
+  Predicted = predicted_values
+)
+
+reg1m <- ggplot(visualization_data1, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = NULL,
+       subtitle= "Men",
+       x = "Observed CES-D Scores",
+       y = "Predicted CES-D Scores") +
+  theme(
+    plot.subtitle = element_text(family = "serif", face = "bold"),
+    axis.text = element_text(size = 12, family = "serif"),
+    axis.title.x = element_text(size = 12, family = "serif"),
+    axis.title.y = element_text(size = 12, family = "serif"))
+
+predicted_values <- predict(did_model_2016_women)
+
+# Create a dataframe with observed and predicted values
+visualization_data2 <- data.frame(
+  Observed = match_data_w$CESD_score_2016,
+  Predicted = predicted_values
+)
+
+reg1w <- ggplot(visualization_data2, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = "Observed vs Predicted CES-D Scores 2016",
+       subtitle = "Women",
+       x = "Observed CES-D Scores",
+       y = "Predicted CES-D Scores") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, family = "serif", face =  "bold"),
+    plot.subtitle = element_text(family = "serif", face= "bold"),
+    axis.text = element_text(size = 12, family = "serif")
+  )
+
+regressions_2018 <- reg1w / reg1m
+regressions_2018
+
+```
+
+## Moving on to 2018
+
+```{r}
+
+# Extract predicted values from the model
+predicted_values <- predict(did_model_2018_men)
+
+# Create a dataframe with observed and predicted values
+visualization_data3 <- data.frame(
+  Observed = match_data_m$CESD_score_2018,
+  Predicted = predicted_values
+)
+
+reg2m <- ggplot(visualization_data3, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = NULL,
+       subtitle = "Men",
+       x = "Observed CESD scores",
+       y = "Predicted CESD scores") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, family = "serif", face =  "bold"),
+    plot.subtitle = element_text(family = "serif", face= "bold"),
+    axis.text = element_text(size = 12, family = "serif")
+  )
+
+predicted_values <- predict(did_model_2018_women)
+
+# Create a dataframe with observed and predicted values
+visualization_data4 <- data.frame(
+  Observed = match_data_w$CESD_score_2018,
+  Predicted = predicted_values
+)
+
+reg2w <- ggplot(visualization_data4, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = "Observed vs Predicted CES-D Scores 2018",
+       subtitle = "Women",
+       x = "Observed CES-D Scores",
+       y = "Predicted CES-D Scores") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, family = "serif", face =  "bold"),
+    plot.subtitle = element_text(family = "serif", face= "bold"),
+    axis.text = element_text(size = 12, family = "serif")
+  )
+
+regressions_2018 <- reg2w / reg2m
+regressions_2018
+```
+
+## Now let's look at the 2020 data
+
+```{r}
+predicted_values <- predict(did_model_2020_men)
+
+# Create a dataframe with observed and predicted values
+visualization_data5 <- data.frame(
+  Observed = match_data_m$CESD_score_2020,
+  Predicted = predicted_values
+)
+
+reg3m <- ggplot(visualization_data5, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = NULL,
+       subtitle = "Men",
+       x = "Observed CESD scores",
+       y = "Predicted CESD scores") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, family = "serif", face =  "bold"),
+    plot.subtitle = element_text(family = "serif", face= "bold"),
+    axis.text = element_text(size = 12, family = "serif")
+  )
+
+
+predicted_values <- predict(did_model_2020_women)
+
+# Create a dataframe with observed and predicted values
+visualization_data6 <- data.frame(
+  Observed = match_data_w$CESD_score_2020,
+  Predicted = predicted_values
+)
+
+reg3w <- ggplot(visualization_data6, aes(x = Observed, y = Predicted)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Add regression line without confidence interval
+  labs(title = "Observed vs Predicted CESD scores 2020",
+       subtitle = "Women",
+       x = "Observed CESD scores",
+       y = "Predicted CESD scores") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, family = "serif", face =  "bold"),
+    plot.subtitle = element_text(family = "serif", face= "bold"),
+    axis.text = element_text(size = 12, family = "serif")
+  )
+
+
+regressions_2020 <- reg3w / reg3m
+regressions_2020
+```
+
+## So what's the trend?
+
+```{r}
+data_vis1 <- matched_data %>%
+  group_by(AfterBereave_2020, GENDER) %>%
+  summarise(
+    mean_cesd = mean(CESD_score_2020),
+    sd_cesd = sd(CESD_score_2020),
+    se_cesd = sd_cesd / sqrt(n()),
+    ci_upper = mean_cesd + 1.96 * se_cesd,
+    ci_lower = mean_cesd - 1.96 * se_cesd
+  )
+
+# Plotti
+data_vis1 |>
+  filter(GENDER == 1) |>
+ggplot(aes(x = AfterBereave_2020, y = mean_cesd)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Event time line
+  labs(subtitle = "Changes in Mean CESD Score among bereaved men 2014-2020 ",
+       title= "Effect of Bereavement on Male CES-D Scores Over Time",
+       x = "Years Since Bereavement",
+       y = "Mean CESD Score") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, family= "serif", face= "bold"),
+    plot.subtitle = element_text(size=8, family = "serif", face = "italic"),
+    axis.title.x = element_text(family= "serif"),
+    axis.title.y = element_text(family= "serif"),
+    panel.border = element_rect(color = "black", fill=NA), 
+     )
+```
+
+## Comparing to women
+
+```{r}
+
+data_vis1_w <- matched_data %>%
+  group_by(AfterBereave_2020, GENDER) %>%
+  summarise(
+    mean_cesd = mean(CESD_score_2020),
+    sd_cesd = sd(CESD_score_2020),
+    se_cesd = sd_cesd / sqrt(n()),
+    ci_upper = mean_cesd + 1.96 * se_cesd,
+    ci_lower = mean_cesd - 1.96 * se_cesd
+  )
+
+data_vis1_w |>
+  filter(GENDER == 2) |>
+ggplot(aes(x = AfterBereave_2020, y = mean_cesd)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Event time line
+  labs(subtitle = "Changes in Mean CESD Score among bereaved women 2014-2020 ",
+       title= "Effect of Bereavement on Female CES-D Scores Over Time",
+       x = "Years Since Bereavement",
+       y = "Mean CESD Score") +
+  theme_minimal()  +
+  theme(
+    plot.title = element_text(size = 12, family= "serif", face= "bold"),
+    plot.subtitle = element_text(size=8, family = "serif", face = "italic"),
+    axis.title.x = element_text(family= "serif"),
+    axis.title.y = element_text(family= "serif"),
+    panel.border = element_rect(color = "black", fill=NA), 
+     )
+```
+
+## All together now!
+
+```{r}
+data_vis1 <- matched_data %>%
+  group_by(AfterBereave_2020, GENDER) %>%
+  summarise(
+    mean_cesd = mean(CESD_score_2020),
+    sd_cesd = sd(CESD_score_2020),
+    se_cesd = sd_cesd / sqrt(n()),
+    ci_upper = mean_cesd + 1.96 * se_cesd,
+    ci_lower = mean_cesd - 1.96 * se_cesd
+  )
+
+# Plotting
+data_vis1 |>
+  ggplot(aes(x = AfterBereave_2020, y = mean_cesd, color = factor(GENDER))) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Event time line
+  labs(subtitle = "Changes in Mean CESD Score by Gender 2014-2020",
+       title= "Effect of Bereavement on CES-D Scores Over Time by Gender",
+       x = "Years Since Bereavement",
+       y = "Mean CESD Score",
+       color = "Gender") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, family= "serif", face= "bold"),
+    plot.subtitle = element_text(size=8, family = "serif", face = "italic"),
+    axis.title.x = element_text(family= "serif"),
+    axis.title.y = element_text(family= "serif"),
+    panel.border = element_rect(color = "black", fill=NA)
+  ) +
+  scale_color_manual(values = c("blue", "red"), labels = c("Female", "Male"))
+
+
+```
+
+## Let's break it down by time after bereavement
+
+-   How do men and women's CES-D depression scores change as they get farther out from the bereavement?
+
+```{r}
+round_half <- function(x) { round(x * 2) / 2 }
+custom_palette <- colorRampPalette(c("darkblue", "lightblue"))(16)
+
+# Graph for Men
+plot_men1 <- match_data_m %>%
+  filter(AfterBereave_2020 %in% c(1, 2)) %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = "Distribution of CES-D Scores 1-2 Years Post Bereavement",
+       subtitle = "Average CES-D Scores Among Men",
+       x = "Average CESD Score",
+       y = NULL) +
+  scale_fill_manual(values = custom_palette) +
+  theme(
+    plot.title = element_text(hjust = -1.5, size = 16, face = "bold", family = "serif"),
+    plot.subtitle = element_text(size = 12, face = "italic", family = "serif"),
+    axis.title = element_text(size = 14, family = "serif"),
+    axis.text = element_text(size = 12, family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+
+```
+
+```{r}
+# Graph for Women
+plot_women1 <- match_data_w %>%
+  filter(AfterBereave_2020 %in% c(1, 2)) %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = NULL,
+       subtitle = "Average CESD Score Among Women",
+       x = "Average CESD Score",
+       y = "Percentage") +
+  scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5)) +
+  scale_fill_manual(values = custom_palette) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "serif"),  # Set font family
+    plot.title = element_text(size = 8, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic"), # Title size and style
+    axis.title = element_text(size = 14),  # Axis label size
+    axis.text = element_text(size = 12), 
+    axis.text.x = element_text(size = 12),# Axis tick label size
+    legend.text = element_text(size = 10),  # Legend text size
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"))
+
+```
+
+```{r}
+
+# Graph for Men
+plot_men2 <- match_data_m %>%
+  filter(AfterBereave_2020 %in% c(3, 4)) %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = "Distribution of CES-D Scores 3-4 Years Post Bereavement",
+       subtitle = "Average CES-D Scores Among Men",
+       x = "Average CESD Score",
+       y = "Percentage") +
+  scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5)) +
+  scale_fill_manual(values = custom_palette) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = -1.5, size = 16, face = "bold", family = "serif"),
+    plot.subtitle = element_text(size = 12, face = "italic", family = "serif"),
+    axis.title = element_text(size = 14, family = "serif"),
+    axis.text = element_text(size = 12, family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+```
+
+```{r}
+
+# Graph for Women
+plot_women2 <- match_data_w %>%
+  filter(
+         AfterBereave_2020 %in% c(3, 4)) %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = NULL,
+       subtitle = "Average CESD Score Among Women",
+       x = "Average CESD Score",
+       y = "Percentage") +
+  scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5)) +
+  scale_fill_manual(values = custom_palette) +
+  theme_minimal() +
+theme(
+    text = element_text(family = "serif"),  # Set font family
+    plot.title = element_text(size = 8, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic"), # Title size and style
+    axis.title = element_text(size = 14),  # Axis label size
+    axis.text = element_text(size = 12), 
+    axis.text.x = element_text(size = 12),# Axis tick label size
+    legend.text = element_text(size = 10),  # Legend text size
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"))
+
+```
+
+```{r}
+
+# Graph for Men
+plot_men3 <- match_data_m %>%
+  filter(
+         AfterBereave_2020 %in% c(5, 6, 7)) %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = "Distribution of CES-D Scores 3-4 Years Post Bereavement",
+       subtitle = "Average CES-D Scores Among Men",
+       x = "Average CESD Score",
+       y = "Percentage") +
+  scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5)) +
+  scale_fill_manual(values = custom_palette) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = -1.5, size = 16, face = "bold", family = "serif"),
+    plot.subtitle = element_text(size = 12, face = "italic", family = "serif"),
+    axis.title = element_text(size = 14, family = "serif"),
+    axis.text = element_text(size = 12, family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+
+```
+
+```{r}
+
+
+# Graph for Women
+plot_women3 <- match_data_w %>%
+  filter(
+         AfterBereave_2020 %in% c(5, 6, 7))  %>%
+  mutate(avg_CESD_score = round_half((CESD_score_2016 + CESD_score_2018 + CESD_score_2020) / 3)) %>%
+  group_by(avg_CESD_score, GENDER) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ungroup() %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ggplot(aes(x = factor(avg_CESD_score), y = Percentage, fill = factor(avg_CESD_score))) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  labs(title = NULL,
+       subtitle = "Average CESD Score Among Women",
+       x = "Average CESD Score",
+       y = "Percentage") +
+  scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5)) +
+  scale_fill_manual(values = custom_palette) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "serif"),  # Set font family
+    plot.title = element_text(size = 8, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic"), # Title size and style
+    axis.title = element_text(size = 14),  # Axis label size
+    axis.text = element_text(size = 12), 
+    axis.text.x = element_text(size = 12),# Axis tick label size
+    legend.text = element_text(size = 10),  # Legend text size
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill=NA), 
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"))
+
+
+
+```
+
+## 1-2 Years After
+
+```{r}
+plot_width <- 4
+plot_height <- 8
+#big_title <- ggdraw() +
+  #draw_label("Average CES-D Scores Men and Women Post Bereavement", size = 10, fontface = "bold")
+
+# Combine plots in pairs horizontally for men
+men_pair1 <- plot_men1 + plot_women1 + plot_layout(ncol = 2)
+men_pair2 <- plot_men2 + plot_women2 + plot_layout(ncol = 2)
+men_pair3 <- plot_men3 + plot_women3 + plot_layout(ncol = 2)
+
+# Combine pairs vertically
+combined_plot_1 <- men_pair1 
+
+combined_plot_2 <- men_pair2
+
+combined_plot_3 <- men_pair3 
+
+combined_plot_height <- 4
+combined_plot_width <- 4
+
+combined_plot_1
+
+# Display the combined plot with the overarching title on top
+#combined_plot + plot_layout(widths = rep(plot_width, 4), heights = rep(plot_height, 4))
+```
+
+## 3-4 Years after Bereavement
+
+```{r}
+combined_plot_2
+```
+
+## 5+ Years after Bereavement
+
+```{r}
+combined_plot_3
+```
+
+## Why might women and men have different reactions to grief?
+
+  - Social and cultural norms
+  - Women are more likely to have social support systems
+  - Many women end up as caregivers to ailing husbands
+  - Men are less likely to report depressive symptoms 
+
+## Self reported health had no significant interactions!
+
+```{r}
+data_vis_srh <- matched_data %>%
+  group_by(AfterBereave_2020, GENDER) %>%
+  summarise(
+    mean_srh = mean(srh_2020),
+    sd_srh = sd(srh_2020),
+    se_srh = sd_srh / sqrt(n()),
+    ci_upper = mean_srh + 1.96 * se_srh,
+    ci_lower = mean_srh - 1.96 * se_srh
+  )
+
+# Plot
+data_vis_srh |>
+  filter(GENDER == 1) |>
+ggplot(aes(x = AfterBereave_2020, y = mean_srh)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Event time line
+  labs(title = "Difference in self reported health and Years After Bereavement 2014-2020 Men",
+       x = "Years Since Bereavement",
+       y = "Mean CESD Score") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    panel.border = element_rect(color = "black", fill=NA), 
+     )
+```
+
+## Now lets look at women
+
+```{r}
+data_vis_srh_w <- matched_data %>%
+  group_by(AfterBereave_2020, GENDER) %>%
+  summarise(
+    mean_srh = mean(srh_2020),
+    sd_srh = sd(srh_2020),
+    se_srh = sd_srh / sqrt(n()),
+    ci_upper = mean_srh + 1.96 * se_srh,
+    ci_lower = mean_srh - 1.96 * se_srh
+  )
+
+# Plot
+data_vis_srh_w |>
+  filter(GENDER == 2) |>
+ggplot(aes(x = AfterBereave_2020, y = mean_srh)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Event time line
+  labs(title = "Difference in CESD Score and Years After Bereavement 2014-2020 Men",
+       x = "Years Since Bereavement",
+       y = "Mean CESD Score") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    panel.border = element_rect(color = "black", fill=NA))
+
+```
+
+## Thanks for watching!
